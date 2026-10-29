@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function signed() { return request.auth != null; }
+  function admin() { return signed() && exists(/databases/$(database)/documents/investAdmins/$(request.auth.uid)) && get(/databases/$(database)/documents/investAdmins/$(request.auth.uid)).data.enabled == true; }
+  function validNumber(n) { return n is int && ((n >= 1 && n <= 14) || (n >= 51 && n <= 60)); }
+  function validInvestment(v) { return v is map && v.keys().hasOnly(['a','b','x','y']) && v.keys().hasAll(['a','b','x','y']) && v.a is int && v.b is int && v.x is int && v.y is int && v.a >= 0 && v.b >= 0 && v.a + v.b > 0 && v.x >= 0 && v.y >= 0 && v.x + v.y == 1000000 && v.x * v.b == v.y * v.a; }
+  function currentKey() { return get(/databases/$(database)/documents/investMeta/session).data.round == 1 ? '1' : (get(/databases/$(database)/documents/investMeta/session).data.round == 2 ? '2' : '3'); }
+  function openRound() { return get(/databases/$(database)/documents/investMeta/session).data.phase == 'open' && get(/databases/$(database)/documents/investMeta/session).data.round in [1,2,3]; }
+  match /investAdmins/{uid} { allow read: if admin() && request.auth.uid == uid; allow write: if false; }
+  match /investMeta/session { allow read: if signed(); allow create, update: if admin() && request.resource.data.keys().hasOnly(['round','phase']) && request.resource.data.round is int && request.resource.data.round >= 0 && request.resource.data.round <= 3 && request.resource.data.phase in ['waiting','open','closed','revealed']; allow delete: if false; }
+  match /investNumbers/{number} {
+   allow get: if signed(); allow list: if admin();
+   allow create: if signed() && !exists(/databases/$(database)/documents/investNumbers/$(number)) && request.resource.data.keys().hasOnly(['uid']) && request.resource.data.uid == request.auth.uid && !exists(/databases/$(database)/documents/investStudents/$(request.auth.uid)) && existsAfter(/databases/$(database)/documents/investStudents/$(request.auth.uid)) && getAfter(/databases/$(database)/documents/investStudents/$(request.auth.uid)).data.number == int(number);
+   allow update: if false; allow delete: if admin();
+  }
+  match /investStudents/{uid} {
+   allow get: if admin() || (signed() && request.auth.uid == uid);
+   allow list: if admin();
+   allow create: if signed() && request.auth.uid == uid && request.resource.data.keys().hasOnly(['number','name','investments','createdAt']) && request.resource.data.keys().hasAll(['number','name','investments','createdAt']) && validNumber(request.resource.data.number) && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 20 && request.resource.data.investments == {} && getAfter(/databases/$(database)/documents/investNumbers/$(string(request.resource.data.number))).data.uid == uid;
+   allow update: if admin() || (signed() && request.auth.uid == uid && openRound() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['investments']) && request.resource.data.investments.diff(resource.data.investments).addedKeys().hasOnly([currentKey()]) && request.resource.data.investments.diff(resource.data.investments).addedKeys().hasAll([currentKey()]) && request.resource.data.investments.diff(resource.data.investments).changedKeys().size() == 0 && request.resource.data.investments.diff(resource.data.investments).removedKeys().size() == 0 && validInvestment(request.resource.data.investments[currentKey()]));
+   allow delete: if admin();
+  }
+ }
+}
